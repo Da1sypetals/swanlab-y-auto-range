@@ -52,14 +52,20 @@ SETTINGS_JS = "() => structuredClone(globalThis.__swanlabYAutoRange.settings.get
 PANEL_JS = """
 (el) => {
   const range = el.nextElementSibling;
+  const logRow = range.nextElementSibling;
+  const swanlabLog = range.querySelector('button[data-slot="toggle"]');
   return {
     prevText: el.previousElementSibling.textContent.trim(),
     nextIsRange: !!range.querySelector('input[placeholder="max"]'),
     rangeVisible: range.offsetParent !== null,
+    rangeValues: [...range.querySelectorAll('input')].map((i) => i.value),
     filtersVisible: el.querySelector('[data-role="filters"]').offsetParent !== null,
-    logVisible: el.querySelector('[data-role="log"]').offsetParent !== null,
-    logState: el.querySelector('[data-role="log"]').dataset.state,
-    swanlabLogState: range.querySelector('button[data-slot="toggle"]').dataset.state,
+    logRowText: logRow.textContent.trim(),
+    logRowIsOurs: logRow.hasAttribute('data-swanlab-y-auto-range'),
+    logVisible: logRow.offsetParent !== null,
+    logState: logRow.querySelector('[data-role="log"]').dataset.state,
+    swanlabLogVisible: swanlabLog.offsetParent !== null,
+    swanlabLogState: swanlabLog.dataset.state,
     nextOfContainerText: el.parentElement.nextElementSibling.textContent.trim(),
   };
 }
@@ -196,12 +202,15 @@ def main():
         page.screenshot(path=str(WORK / "auto_default.png"))
 
         page.get_by_role("button", name="设置", exact=True).click()
-        block = page.locator("[data-swanlab-y-auto-range]")
+        # 扩展插入两处：「模式」块在「范围」一行前面，「Log 坐标」一行在它后面；first 是「模式」块
+        block = page.locator("[data-swanlab-y-auto-range]").first
         block.wait_for(timeout=10000)
         layout = block.evaluate(PANEL_JS)
         assert layout["prevText"] == "Y 轴" and layout["nextIsRange"], layout
         assert layout["nextOfContainerText"] == "悬停模式", layout
-        assert not layout["rangeVisible"] and layout["filtersVisible"] and layout["logVisible"], layout
+        assert not layout["rangeVisible"] and layout["filtersVisible"], layout
+        assert layout["logRowIsOurs"] and layout["logRowText"] == "Log 坐标" and layout["logVisible"], layout
+        assert not layout["swanlabLogVisible"], layout
         print("2. Auto 时的面板:", layout)
         panel = block.locator("xpath=ancestor::div[contains(@class,'space-y-4')][1]")
         panel.screenshot(path=str(WORK / "panel.png"))
@@ -222,10 +231,37 @@ def main():
         block.locator('button[data-mode="manual"]').click()
         page.wait_for_timeout(600)
         layout = block.evaluate(PANEL_JS)
-        assert layout["rangeVisible"] and not layout["filtersVisible"] and not layout["logVisible"], layout
+        assert layout["rangeVisible"] and not layout["filtersVisible"] and layout["logVisible"], layout
+        assert not layout["swanlabLogVisible"], layout
         print("5. 切换到「指定 Y 的范围」，显示「范围」一行，隐藏 Filter 两项:", layout)
         panel.screenshot(path=str(WORK / "panel_manual.png"))
         check_charts(page, "指定 Y 的范围")
+
+        range_row = block.locator("xpath=following-sibling::div[1]")
+        for placeholder, value in (("min", "0"), ("max", "1")):
+            box_input = range_row.locator(f'input[placeholder="{placeholder}"]')
+            box_input.fill(value)
+            box_input.press("Enter")
+        page.wait_for_timeout(1000)
+        charts = check_charts(page, "填写 min=0 max=1")
+        assert all(c["yDomain"] == [0, 1] for c in charts.values()), {t: c["yDomain"] for t, c in charts.items()}
+        print("5.1 在「范围」一行填 min=0、max=1，所有图表的 Y 轴都变成 [0, 1]")
+
+        block.locator('button[data-mode="auto"]').click()
+        page.wait_for_timeout(1000)
+        layout = block.evaluate(PANEL_JS)
+        assert layout["rangeValues"] == ["", ""], layout
+        assert not layout["rangeVisible"] and layout["filtersVisible"], layout
+        print("5.2 切换到 Auto，「范围」一行的 min、max 被清空")
+        check_charts(page, "Auto 清空范围")
+
+        block.locator('button[data-mode="manual"]').click()
+        page.wait_for_timeout(1000)
+        layout = block.evaluate(PANEL_JS)
+        assert layout["rangeValues"] == ["", ""], layout
+        charts = check_charts(page, "再切回指定 Y 的范围")
+        assert not any(c["yDomain"] == [0, 1] for c in charts.values())
+        print("5.3 再切回「指定 Y 的范围」，min、max 为空，图表不再是 [0, 1]")
 
         block.locator('button[data-mode="auto"]').click()
         block.locator('[data-filter="filterMin"] button[role="switch"]').click()
@@ -235,21 +271,21 @@ def main():
         print("6. 切换回 Auto，隐藏「范围」一行，重新打开 Filter min")
         check_charts(page, "切换回 Auto")
 
-        block.locator('[data-role="log"]').click()
+        page.locator('[data-role="log"]').click()
         page.wait_for_timeout(800)
         layout = block.evaluate(PANEL_JS)
-        assert layout["logState"] == "on" and layout["swanlabLogState"] == "on", layout
+        assert layout["logState"] == "checked" and layout["swanlabLogState"] == "on", layout
         charts = dump(page)
         assert all(c["logScale"] for c in charts.values()), {t: c["logScale"] for t, c in charts.items()}
-        print("6.1 Auto 时点「模式」一行里的 Log，SwanLab 的 Log 开关跟着打开，图表变为对数坐标")
+        print("6.1 打开「Log 坐标」，SwanLab 原有的 Log 开关跟着打开，图表变为对数坐标")
         panel.screenshot(path=str(WORK / "panel_auto_log.png"))
         check_charts(page, "Log 打开")
-        block.locator('[data-role="log"]').click()
+        page.locator('[data-role="log"]').click()
         page.wait_for_timeout(800)
         layout = block.evaluate(PANEL_JS)
-        assert layout["logState"] == "off" and layout["swanlabLogState"] == "off", layout
+        assert layout["logState"] == "unchecked" and layout["swanlabLogState"] == "off", layout
         assert not any(c["logScale"] for c in dump(page).values())
-        print("6.2 再点一次 Log，恢复线性坐标")
+        print("6.2 关闭「Log 坐标」，恢复线性坐标")
 
         page.locator("h1", has_text="仪表盘设置").locator(
             "xpath=ancestor::div[./button[.//*[contains(@class,'lucide-x')]]][1]/button[.//*[contains(@class,'lucide-x')]]"

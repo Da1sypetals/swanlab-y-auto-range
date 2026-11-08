@@ -209,14 +209,16 @@ def main():
         check_charts(page, baseline, "默认")
 
         page.get_by_role("button", name="设置", exact=True).click()
-        block = page.locator("[data-swanlab-y-auto-range]")
+        # 扩展插入两处：「模式」块在「范围」一行前面，「Log 坐标」一行在它后面；first 是「模式」块
+        block = page.locator("[data-swanlab-y-auto-range]").first
         block.wait_for(timeout=10000)
         layout = block.evaluate(
             """(el) => ({
               prevText: el.previousElementSibling.textContent.trim(),
               nextIsRange: !!el.nextElementSibling.querySelector('input[placeholder="max"]'),
               rangeVisible: el.nextElementSibling.offsetParent !== null,
-              logVisible: el.querySelector('[data-role="log"]').offsetParent !== null,
+              logVisible: el.nextElementSibling.nextElementSibling.querySelector('[data-role="log"]').offsetParent !== null,
+              swanlabLogVisible: el.nextElementSibling.querySelector('button[data-slot="toggle"]').offsetParent !== null,
               nextOfContainerHasSwitch: !!el.parentElement.nextElementSibling.querySelector('button[role="switch"]'),
               nextOfContainerText: el.parentElement.nextElementSibling.textContent.trim(),
               modeStates: [...el.querySelectorAll('button[data-mode]')].map((b) => [b.textContent, b.dataset.state]),
@@ -228,7 +230,7 @@ def main():
         )
         print("2. 面板结构:", layout)
         assert layout["prevText"] == "Y 轴" and layout["nextIsRange"]
-        assert not layout["rangeVisible"] and layout["logVisible"]
+        assert not layout["rangeVisible"] and layout["logVisible"] and not layout["swanlabLogVisible"]
         assert layout["nextOfContainerHasSwitch"]
         assert layout["modeStates"] == [["指定 Y 的范围", "off"], ["Auto", "on"]]
         assert layout["filtersHidden"] is False
@@ -271,12 +273,29 @@ def main():
         block.locator('button[data-mode="manual"]').click()
         page.wait_for_timeout(400)
         assert block.locator('[data-role="filters"]').is_hidden()
-        assert block.locator('[data-role="log"]').is_hidden()
-        assert block.locator("xpath=following-sibling::div[1]").is_visible()
+        assert page.locator('[data-role="log"]').is_visible()
+        range_row = block.locator("xpath=following-sibling::div[1]")
+        assert range_row.is_visible()
         assert page.evaluate(SETTINGS_JS)["mode"] == "manual"
         print("6. 切换到「指定 Y 的范围」，显示「范围」一行，Filter 两项隐藏")
         check_charts(page, baseline, "指定 Y 的范围")
         panel.screenshot(path=str(WORK / "panel_manual.png"))
+
+        for placeholder, value in (("min", "0"), ("max", "1")):
+            box_input = range_row.locator(f'input[placeholder="{placeholder}"]')
+            box_input.fill(value)
+            box_input.press("Enter")
+        page.wait_for_timeout(800)
+        filled = {k: c["y"] for k, c in dump(page).items()}
+        assert all(y == [0, 1] for y in filled.values()), filled
+        block.locator('button[data-mode="auto"]').click()
+        page.wait_for_timeout(800)
+        values = range_row.evaluate("(row) => [...row.querySelectorAll('input')].map((i) => i.value)")
+        assert values == ["", ""], values
+        block.locator('button[data-mode="manual"]').click()
+        page.wait_for_timeout(800)
+        print("6.1 填 min=0、max=1 后所有图表为 [0, 1]；切到 Auto 再切回，min、max 已清空")
+        check_charts(page, baseline, "清空后切回指定 Y 的范围")
 
         block.locator('button[data-mode="auto"]').click()
         page.wait_for_timeout(400)

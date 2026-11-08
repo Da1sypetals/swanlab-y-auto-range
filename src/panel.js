@@ -159,11 +159,17 @@
     return { row, toggle, bar, readout };
   }
 
-  // yField: SwanLab 的 Y 轴「范围」一行，Auto 时隐藏；它里面的 Log 开关由「模式」一行里的 Log 按钮代为操作
+  // yField: SwanLab 的 Y 轴「范围」一行（min、max、Log、重置），只在「指定 Y 的范围」时显示。
+  // Log 与模式无关，单独放在「Log 坐标」一行，开关点击时转给 SwanLab 原有的 Log 按钮，原有按钮隐藏
   function build(yField) {
     const root = el("div", "space-y-3");
     root.setAttribute(MARK, "");
     const swanlabLog = yField.querySelector('button[data-slot="toggle"]');
+    const swanlabReset = yField.querySelector("button:has(svg.lucide-rotate-ccw)");
+    const rangeInputs = [
+      yField.querySelector('input[placeholder="min"]'),
+      yField.querySelector('input[placeholder="max"]'),
+    ];
 
     const manual = toggleButton("指定 Y 的范围", () =>
       NS.settings.update((s) => {
@@ -179,16 +185,15 @@
     auto.dataset.mode = "auto";
     const group = el("div", CLS.group);
     group.append(manual, auto);
-    // 与 SwanLab「范围」一行里的 Log 开关外观相同，点击时转给那个开关，状态跟随它
-    const log = el("button", swanlabLog.className);
-    log.type = "button";
-    log.textContent = swanlabLog.textContent;
-    log.dataset.role = "log";
-    log.addEventListener("click", () => {
+    const modeRow = field("模式", [group]);
+
+    const log = switchButton(() => {
       swanlabLog.click();
       requestAnimationFrame(syncLog);
     });
-    const modeRow = field("模式", [group, log]);
+    log.dataset.role = "log";
+    const logRow = field("Log 坐标", [log]);
+    logRow.setAttribute(MARK, "");
 
     const filters = el("div", "space-y-3");
     filters.dataset.role = "filters";
@@ -199,8 +204,11 @@
     root.append(modeRow, filters);
     return {
       root,
+      logRow,
       yField,
       swanlabLog,
+      swanlabReset,
+      rangeInputs,
       log,
       manual,
       auto,
@@ -211,22 +219,31 @@
 
   let current = null;
 
+  function connected() {
+    return current && current.root.isConnected && current.logRow.isConnected;
+  }
+
   function syncLog() {
-    if (!current || !current.root.isConnected) return;
-    const on = current.swanlabLog.dataset.state === "on";
-    setToggle(current.log, on);
+    if (!connected()) return;
+    setSwitch(current.log, current.swanlabLog.dataset.state === "on");
+  }
+
+  // Auto 下 SwanLab 的全局 Y 轴范围必须为空：否则切回「指定 Y 的范围」时，之前填的 min/max
+  // 会重新作用到所有图表上。用「范围」一行自带的重置按钮清空（SwanLab 把 $yRange 设为 [null, null]）
+  function clearManualRange() {
+    if (current.rangeInputs.some((input) => input.value !== "")) current.swanlabReset.click();
   }
 
   function render() {
-    if (!current || !current.root.isConnected) return;
+    if (!connected()) return;
     const s = NS.settings.get();
     const auto = s.mode === "auto";
     setToggle(current.manual, !auto);
     setToggle(current.auto, auto);
     current.filters.hidden = !auto;
-    // 按钮的 inline-flex class 会覆盖 hidden 属性，用 style 控制显示
-    current.log.style.display = auto ? "" : "none";
     current.yField.style.display = auto ? "none" : "";
+    current.swanlabLog.style.display = "none";
+    if (auto) clearManualRange();
     syncLog();
     for (const name of ["filterMin", "filterMax"]) {
       const { toggle, bar, readout } = current.rows[name];
@@ -258,14 +275,19 @@
   // 「模式」一行放在「Y 轴」标题下面、SwanLab 的「范围」一行上面：
   // 选「指定 Y 的范围」时显示「范围」一行，选 Auto 时显示 Filter min / Filter max
   function ensure() {
-    if (current && current.root.isConnected) {
+    if (connected()) {
       syncLog();
       return;
+    }
+    if (current) {
+      current.root.remove();
+      current.logRow.remove();
     }
     const yField = findYRangeField();
     if (!yField) return;
     current = build(yField);
     yField.before(current.root);
+    yField.after(current.logRow);
     render();
   }
 
