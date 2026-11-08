@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "SwanLab Y Auto Range",
+  "version": "0.1.0",
+  "description": "在 SwanLab 仪表盘设置面板的 Y 轴区域加入 Auto 范围模式，按比例过滤极端值。",
+  "content_scripts": [
+    {
+      "matches": ["https://swanlab.cn/*"],
+      "js": [
+        "src/range.js",
+        "src/ticks.js",
+        "src/settings.js",
+        "src/chartjs-hook.js",
+        "src/unovis-hook.js",
+        "src/panel.js",
+        "src/main.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    }
+  ]
+}
